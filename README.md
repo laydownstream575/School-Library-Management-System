@@ -43,24 +43,15 @@ python main.py
 
 ## Build a standalone executable
 
-### One-file (standalone, single .exe)
+See [BUILD.md](BUILD.md) for detailed build instructions, including one-folder, one-file, and Inno Setup installer builds.
 
-```bash
-build_onefile.bat
-```
-
-Output: `dist-onefile\School Library Management System.exe`  
-This single file can be copied to any Windows PC and run without Python.
-
-### One-folder (faster startup, folder with _internal)
+### Quick build
 
 ```bash
 build_exe.bat
 ```
 
-Output: `dist\School Library Management System\School Library Management System.exe`
-
-The database is created automatically on first run inside `%LOCALAPPDATA%\School Library Management System\`.
+Output: `dist\School Library Management System\`
 
 ## Project Structure
 
@@ -73,7 +64,14 @@ school-library-management/
 ├── database/            # SQLite schema and database file
 ├── exports/             # Exported Excel reports
 ├── backups/             # Database backups
-└── assets/              # Icons and images
+├── assets/              # Icons and images
+├── installer/           # Inno Setup installer output
+├── installer.iss        # Inno Setup script
+├── build_exe.bat        # PyInstaller build script
+├── pyproject.toml       # Project metadata and test config
+├── README.md            # This file
+├── BUILD.md             # Build instructions
+└── AGENTS.md            # AI agent instructions
 ```
 
 ## Tech Stack
@@ -81,7 +79,8 @@ school-library-management/
 - **UI:** PySide6 (Qt6)
 - **Database:** SQLite
 - **Excel:** openpyxl
-- **Packaging:** PyInstaller (one-file & one-folder builds)
+- **Packaging:** PyInstaller (one-file & one-folder builds), Inno Setup (installer)
+- **Testing:** pytest
 
 ## License
 
