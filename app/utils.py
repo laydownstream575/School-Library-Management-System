@@ -1,8 +1,11 @@
 """Shared utility helpers: date/time, settings access, activity logging, data helpers."""
 
+import logging
 from datetime import datetime, timedelta
 
 from app import config, database
+
+logger = logging.getLogger(__name__)
 
 DATE_FORMAT = "%Y-%m-%d"
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -109,13 +112,19 @@ def log_activity(action_type: str, description: str = "") -> None:
             (action_type, description, now_timestamp()),
         )
     except Exception:
-        # Logging must never break the main operation.
-        pass
+        logger.exception("log_activity failed for %s", action_type)
 
 
 # ---------------------------------------------------------------------------
 # Data helpers
 # ---------------------------------------------------------------------------
+def normalize_key(text: str) -> str:
+    """Normalize text for duplicate comparison: trim, collapse spaces, lowercase."""
+    if not text:
+        return ""
+    return " ".join(str(text).strip().lower().split())
+
+
 def row_to_dict(row):
     """Convert a sqlite3.Row (or None) to a plain dict.
 

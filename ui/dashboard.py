@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from app import utils
 from app.config import COLORS
-from services import report_service
+from services import ServiceError, report_service
 from ui import theme
 
 
@@ -118,36 +118,39 @@ class DashboardPage(QWidget):
     # -- Data --------------------------------------------------------------
     def refresh(self):
         """Reload all dashboard data from the database."""
-        summary = report_service.dashboard_summary()
-        for key, card in self.cards.items():
-            card.set_value(summary.get(key, 0))
+        try:
+            summary = report_service.dashboard_summary()
+            for key, card in self.cards.items():
+                card.set_value(summary.get(key, 0))
 
-        issues = report_service.recent_issues()
-        self._fill_table(
-            self.issues_table,
-            issues,
-            lambda r: [
-                r.get("student_name", ""),
-                r.get("book_title", ""),
-                utils.format_display_date(r.get("issue_date")),
-                utils.format_display_date(r.get("due_date")),
-                r.get("status", ""),
-            ],
-            empty_text="No issues recorded yet.",
-        )
+            issues = report_service.recent_issues()
+            self._fill_table(
+                self.issues_table,
+                issues,
+                lambda r: [
+                    r.get("student_name", ""),
+                    r.get("book_title", ""),
+                    utils.format_display_date(r.get("issue_date")),
+                    utils.format_display_date(r.get("due_date")),
+                    r.get("status", ""),
+                ],
+                empty_text="No issues recorded yet.",
+            )
 
-        returns = report_service.recent_returns()
-        self._fill_table(
-            self.returns_table,
-            returns,
-            lambda r: [
-                r.get("student_name", ""),
-                r.get("book_title", ""),
-                utils.format_display_date(r.get("issue_date")),
-                utils.format_display_date(r.get("return_date")),
-            ],
-            empty_text="No returns recorded yet.",
-        )
+            returns = report_service.recent_returns()
+            self._fill_table(
+                self.returns_table,
+                returns,
+                lambda r: [
+                    r.get("student_name", ""),
+                    r.get("book_title", ""),
+                    utils.format_display_date(r.get("issue_date")),
+                    utils.format_display_date(r.get("return_date")),
+                ],
+                empty_text="No returns recorded yet.",
+            )
+        except ServiceError:
+            pass  # keep previous values visible
 
     def _fill_table(self, table, rows, row_mapper, empty_text):
         table.setRowCount(0)

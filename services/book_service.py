@@ -39,14 +39,20 @@ def get_books(search: str = "", status: str = None, availability: str = None,
 
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     query = f"SELECT * FROM books {where} ORDER BY title ASC"
-    return [dict(r) for r in database.fetch_all(query, tuple(params))]
+    try:
+        rows = database.fetch_all(query, tuple(params))
+    except database.DatabaseError as exc:
+        raise ServiceError("Unable to load books.") from exc
+    return [dict(r) for r in rows]
 
 
 def get_book(book_id: int):
     """Return a single book as a dict, or None."""
-    return utils.row_to_dict(
-        database.fetch_one("SELECT * FROM books WHERE id = ?", (book_id,))
-    )
+    try:
+        row = database.fetch_one("SELECT * FROM books WHERE id = ?", (book_id,))
+    except database.DatabaseError as exc:
+        raise ServiceError("Unable to load book.") from exc
+    return utils.row_to_dict(row)
 
 
 def get_active_available_books(search: str = ""):
@@ -56,13 +62,18 @@ def get_active_available_books(search: str = ""):
         "SELECT * FROM books WHERE status = 'ACTIVE' AND available_quantity > 0 "
         "AND (title LIKE ? OR author LIKE ? OR category LIKE ?) ORDER BY title ASC"
     )
-    return [dict(r) for r in database.fetch_all(query, (like, like, like))]
+    try:
+        rows = database.fetch_all(query, (like, like, like))
+    except database.DatabaseError as exc:
+        raise ServiceError("Unable to load available books.") from exc
+    return [dict(r) for r in rows]
 
 
 def add_book(data: dict) -> int:
     """Validate and insert a new book. Returns the new book id.
 
     ``available_quantity`` defaults to ``total_quantity`` when not supplied.
+    Duplicate detection uses the normalized composite key.
     """
     title = (data.get("title") or "").strip()
     total_raw = data.get("total_quantity")
@@ -78,16 +89,26 @@ def add_book(data: dict) -> int:
     else:
         available = int(str(available_raw).strip())
 
+    existing = find_by_normalized_key(
+        title, data.get("author"), data.get("category")
+    )
+    if existing:
+        raise ServiceError(
+            "A book with this title, author, and category already exists."
+        )
+
+    book_key = _compute_book_key(title, data.get("author"), data.get("category"))
     now = utils.now_timestamp()
     try:
         book_id = database.execute(
-            "INSERT INTO books (title, author, category, "
+            "INSERT INTO books (title, author, category, book_key, "
             "total_quantity, available_quantity, status, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 title,
                 (data.get("author") or "").strip() or None,
                 (data.get("category") or "").strip() or None,
+                book_key,
                 total,
                 available,
                 data.get("status") or config.STATUS_ACTIVE,
@@ -183,13 +204,15 @@ def delete_book(book_id: int) -> None:
 
 def get_issued_count(book_id: int) -> int:
     """How many copies of this book are currently issued out."""
-    return int(
-        database.fetch_value(
+    try:
+        val = database.fetch_value(
             "SELECT COUNT(*) FROM book_issues WHERE book_id = ? AND status = 'ISSUED'",
             (book_id,),
             default=0,
         )
-    )
+    except database.DatabaseError as exc:
+        raise ServiceError("Unable to load issued count.") from exc
+    return int(val)
 
 
 def availability_label(book: dict) -> str:
@@ -206,8 +229,110 @@ def availability_label(book: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Duplicate-aware import (used by Excel import)
+# ---------------------------------------------------------------------------
+
+def find_by_normalized_key(title: str, author: str = None,
+                           category: str = None) -> dict | None:
+    """Return an existing book matching the normalized composite key, or None."""
+    key = _compute_book_key(title, author, category)
+    if not key:
+        return None
+    try:
+        row = database.fetch_one(
+            "SELECT * FROM books WHERE book_key = ?", (key,)
+        )
+    except database.DatabaseError as exc:
+        raise ServiceError("Unable to look up existing book.") from exc
+    return dict(row) if row else None
+
+
+def import_book(data: dict) -> str:
+    """Import a single book from Excel (idempotent upsert).
+
+    Returns ``"imported"``, ``"updated"``, or ``"skipped"``.
+    Preserves currently issued copies when quantities change.
+    """
+    title = (data.get("title") or "").strip()
+    if not title:
+        raise ServiceError("Book title is required.")
+    author = (data.get("author") or "").strip() or None
+    category = (data.get("category") or "").strip() or None
+    total_raw = data.get("total_quantity")
+    try:
+        total = int(str(total_raw).strip())
+    except (ValueError, TypeError):
+        raise ServiceError("Total quantity is not a valid number.")
+    if total < 0:
+        raise ServiceError("Total quantity cannot be negative.")
+
+    existing = find_by_normalized_key(title, author, category)
+
+    if existing:
+        issued = get_issued_count(existing["id"])
+
+        if existing["total_quantity"] == total:
+            existing_author = existing.get("author") or ""
+            existing_cat = existing.get("category") or ""
+            if (utils.normalize_key(existing_author) == utils.normalize_key(author or "")
+                    and utils.normalize_key(existing_cat) == utils.normalize_key(category or "")):
+                return "skipped"
+
+        if total < issued:
+            raise ServiceError(
+                f"Total quantity cannot be reduced below the "
+                f"{issued} currently issued copies."
+            )
+
+        new_available = total - issued
+        book_key = _compute_book_key(title, author, category)
+        now = utils.now_timestamp()
+        try:
+            database.execute(
+                "UPDATE books SET title=?, author=?, category=?, "
+                "total_quantity=?, available_quantity=?, book_key=?, "
+                "updated_at=? WHERE id=?",
+                (title, author, category, total, new_available,
+                 book_key, now, existing["id"]),
+            )
+        except database.DatabaseError as exc:
+            raise ServiceError(_friendly_db_error(exc)) from exc
+
+        utils.log_activity("BOOK_UPDATED",
+                           f"Book updated via import: {title}")
+        return "updated"
+
+    book_key = _compute_book_key(title, author, category)
+    now = utils.now_timestamp()
+    try:
+        database.execute(
+            "INSERT INTO books (title, author, category, book_key, "
+            "total_quantity, available_quantity, status, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (title, author, category, book_key, total, total,
+             config.STATUS_ACTIVE, now, now),
+        )
+    except database.DatabaseError as exc:
+        raise ServiceError(_friendly_db_error(exc)) from exc
+
+    utils.log_activity("BOOK_ADDED", f"Book added via import: {title}")
+    return "imported"
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _compute_book_key(title: str, author: str = None,
+                      category: str = None) -> str:
+    """Build the normalized unique key for a book."""
+    parts = [
+        utils.normalize_key(title or ""),
+        utils.normalize_key(author or ""),
+        utils.normalize_key(category or ""),
+    ]
+    return "|".join(parts)
 def _friendly_db_error(exc: Exception) -> str:
     text = str(exc).lower()
     if "check" in text:

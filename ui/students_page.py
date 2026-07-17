@@ -1,6 +1,8 @@
 """Student Management page: list, search, filter, add/edit, delete,
 view issue history, and Excel import/export."""
 
+import logging
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -22,6 +24,9 @@ from PySide6.QtWidgets import (
 from app import utils
 from services import ServiceError, excel_service, student_service
 from ui import theme
+from ui.workers import run_worker
+
+logger = logging.getLogger(__name__)
 
 
 class StudentFormDialog(QDialog):
@@ -100,8 +105,23 @@ class StudentFormDialog(QDialog):
         self.division_input.setText(student.get("division") or "")
         self.status_input.setCurrentText(student.get("status") or "ACTIVE")
 
+    def _validate(self) -> bool:
+        code = self.code_input.text().strip()
+        name = self.name_input.text().strip()
+        if not code:
+            self.error_label.setText("Student ID is required.")
+            self.code_input.setFocus()
+            return False
+        if not name:
+            self.error_label.setText("Student name is required.")
+            self.name_input.setFocus()
+            return False
+        return True
+
     def _save(self):
         self.error_label.setText("")
+        if not self._validate():
+            return
         data = {
             "student_code": self.code_input.text(),
             "name": self.name_input.text(),
@@ -157,7 +177,8 @@ class StudentHistoryDialog(QDialog):
             table.setItem(r, 3, QTableWidgetItem(utils.format_display_date(rec.get("due_date"))))
             table.setItem(r, 4, QTableWidgetItem(utils.format_display_date(rec.get("return_date"))))
             table.setCellWidget(r, 5, theme.badge_in_cell(rec.get("status") or ""))
-        table.resizeColumnsToContents()
+        for col, w in ((0, 80), (2, 120), (3, 120), (4, 120), (5, 100)):
+            table.setColumnWidth(col, w)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
 
         close = theme.make_button("Close", "secondary")
@@ -226,12 +247,12 @@ class StudentsPage(QWidget):
         self.table.setAlternatingRowColors(True)
         header = self.table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignCenter)
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.Fixed)
         header.setSectionResizeMode(5, QHeaderView.Fixed)
+        self.table.setColumnWidth(0, 150)
+        self.table.setColumnWidth(2, 120)
+        self.table.setColumnWidth(3, 100)
         self.table.setColumnWidth(4, 130)
         self.table.setColumnWidth(5, 300)
         layout.addWidget(self.table)
@@ -253,10 +274,10 @@ class StudentsPage(QWidget):
         )
 
     def _populate(self, students):
-        self.table.setRowCount(0)
-        for st in students:
-            r = self.table.rowCount()
-            self.table.insertRow(r)
+        self.table.setUpdatesEnabled(False)
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(students))
+        for r, st in enumerate(students):
             self.table.setRowHeight(r, 64)
             self.table.setItem(r, 0, self._centered_item(st.get("student_code") or ""))
             self.table.setItem(r, 1, self._centered_item(st.get("name") or ""))
@@ -264,6 +285,8 @@ class StudentsPage(QWidget):
             self.table.setItem(r, 3, self._centered_item(st.get("division") or ""))
             self.table.setCellWidget(r, 4, theme.badge_in_cell(st.get("status", "")))
             self.table.setCellWidget(r, 5, self._actions_cell(st))
+        self.table.setSortingEnabled(True)
+        self.table.setUpdatesEnabled(True)
         self._fix_column_widths()
 
     def _fix_column_widths(self):
@@ -312,7 +335,16 @@ class StudentsPage(QWidget):
             self.main_window.refresh_all()
 
     def _edit_student(self, student):
-        fresh = student_service.get_student(student["id"])
+        try:
+            fresh = student_service.get_student(student["id"])
+        except ServiceError as exc:
+            theme.show_error(self, str(exc))
+            self.refresh()
+            return
+        if fresh is None:
+            theme.show_error(self, "Student not found. They may have been deleted.")
+            self.refresh()
+            return
         dialog = StudentFormDialog(self, fresh)
         if dialog.exec() == QDialog.Accepted:
             theme.show_success(self, "Student updated successfully.")
@@ -357,11 +389,16 @@ class StudentsPage(QWidget):
     def _export_excel(self):
         try:
             students = student_service.get_students(search=self.search_input.text())
-            path = excel_service.export_students(students)
-            theme.show_success(
-                self, f"Report exported successfully.\nFile saved at:\n{path}"
-            )
         except ServiceError as exc:
             theme.show_error(self, str(exc))
-        except Exception:
-            theme.show_error(self, "Unable to export the file. Please try again.")
+            return
+
+        def on_ok(path):
+            theme.show_success(
+                self, f"Students exported successfully.\nFile saved at:\n{path}"
+            )
+
+        def on_err(msg):
+            theme.show_error(self, msg)
+
+        run_worker(self, excel_service.export_students, on_ok, on_err, students)

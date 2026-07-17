@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS books (
     title TEXT NOT NULL,
     author TEXT,
     category TEXT,
+    book_key TEXT,
     total_quantity INTEGER NOT NULL CHECK (total_quantity >= 0),
     available_quantity INTEGER NOT NULL CHECK (available_quantity >= 0),
     status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE')),
@@ -76,6 +77,25 @@ CREATE TABLE IF NOT EXISTS activity_logs (
     action_type TEXT NOT NULL,
     description TEXT,
     created_at TEXT NOT NULL
+);
+
+-- ---------------------------------------------------------------------------
+-- migration_audit: records of automated data corrections during schema
+-- migrations. status='manual_review_required' means a human must verify.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS migration_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    migration_from INTEGER NOT NULL,
+    migration_to INTEGER NOT NULL,
+    table_name TEXT NOT NULL,
+    row_id INTEGER,
+    column_name TEXT NOT NULL DEFAULT '',
+    old_value TEXT,
+    new_value TEXT,
+    status TEXT NOT NULL DEFAULT 'corrected'
+        CHECK (status IN ('corrected', 'manual_review_required')),
+    reason TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
 -- ---------------------------------------------------------------------------

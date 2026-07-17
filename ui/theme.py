@@ -6,10 +6,12 @@ helpers. Pages import from here so the app stays visually consistent.
 """
 
 import os
+from contextlib import contextmanager
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -290,6 +292,19 @@ class LogoLabel(QLabel):
     def set_size(self, size: int):
         self.setFixedSize(size, size)
         self._load(size)
+
+
+# ---------------------------------------------------------------------------
+# Wait cursor helper for long operations
+# ---------------------------------------------------------------------------
+@contextmanager
+def wait_cursor():
+    """Show a wait cursor while a slow synchronous operation runs."""
+    try:
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        yield
+    finally:
+        QApplication.restoreOverrideCursor()
 
 
 # ---------------------------------------------------------------------------

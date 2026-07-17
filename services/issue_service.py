@@ -11,11 +11,14 @@ from services import ServiceError
 
 def has_active_issue(student_id: int, book_id: int) -> bool:
     """True if this student already holds this specific book (unreturned)."""
-    row = database.fetch_one(
-        "SELECT id FROM book_issues WHERE student_id = ? AND book_id = ? "
-        "AND status = 'ISSUED'",
-        (student_id, book_id),
-    )
+    try:
+        row = database.fetch_one(
+            "SELECT id FROM book_issues WHERE student_id = ? AND book_id = ? "
+            "AND status = 'ISSUED'",
+            (student_id, book_id),
+        )
+    except database.DatabaseError:
+        raise ServiceError("Could not check existing issues.")
     return row is not None
 
 
@@ -158,7 +161,10 @@ def get_pending_returns(search: str = ""):
         "(s.student_code LIKE ? OR s.name LIKE ? OR b.title LIKE ?) "
         "ORDER BY bi.due_date IS NULL, bi.due_date ASC"
     )
-    rows = database.fetch_all(query, (like, like, like))
+    try:
+        rows = database.fetch_all(query, (like, like, like))
+    except database.DatabaseError:
+        raise ServiceError("Could not load pending returns.")
     result = []
     for row in rows:
         item = dict(row)
@@ -185,7 +191,11 @@ def get_overdue_books(search: str = ""):
         "AND (s.student_code LIKE ? OR s.name LIKE ? OR b.title LIKE ?) "
         "ORDER BY bi.due_date ASC"
     )
-    return [dict(r) for r in database.fetch_all(query, (like, like, like))]
+    try:
+        rows = database.fetch_all(query, (like, like, like))
+    except database.DatabaseError:
+        raise ServiceError("Could not load overdue books.")
+    return [dict(r) for r in rows]
 
 
 def get_issue(issue_id: int):
@@ -197,7 +207,10 @@ def get_issue(issue_id: int):
         "JOIN books b ON bi.book_id = b.id "
         "JOIN students s ON bi.student_id = s.id WHERE bi.id = ?"
     )
-    row = database.fetch_one(query, (issue_id,))
+    try:
+        row = database.fetch_one(query, (issue_id,))
+    except database.DatabaseError:
+        raise ServiceError("Could not load issue details.")
     return dict(row) if row is not None else None
 
 

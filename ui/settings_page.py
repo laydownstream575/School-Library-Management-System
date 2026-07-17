@@ -1,5 +1,7 @@
 """Settings page: school/library config, and backup/restore controls."""
 
+import logging
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -17,6 +19,9 @@ from PySide6.QtWidgets import (
 from app import utils
 from services import ServiceError, backup_service, excel_service
 from ui import theme
+from ui.workers import run_worker
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsPage(QWidget):
@@ -178,26 +183,28 @@ class SettingsPage(QWidget):
             getattr(self, attr).setText(path)
 
     def _backup_database(self):
-        try:
-            path = backup_service.backup_database()
+        def on_ok(path):
             theme.show_success(
                 self, f"Backup created successfully.\nFile saved at:\n{path}"
             )
             self.refresh()
-        except ServiceError as exc:
-            theme.show_error(self, str(exc))
+
+        def on_err(msg):
+            theme.show_error(self, msg)
+
+        run_worker(self, backup_service.backup_database, on_ok, on_err)
 
     def _export_full_backup(self):
-        try:
-            path = excel_service.export_full_backup()
+        def on_ok(path):
             theme.show_success(
                 self,
                 f"Full Excel backup created successfully.\nFile saved at:\n{path}",
             )
-        except ServiceError as exc:
-            theme.show_error(self, str(exc))
-        except Exception:
-            theme.show_error(self, "Backup failed. Please check folder permission.")
+
+        def on_err(msg):
+            theme.show_error(self, msg)
+
+        run_worker(self, excel_service.export_full_backup, on_ok, on_err)
 
     def _restore_backup(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -213,11 +220,16 @@ class SettingsPage(QWidget):
             ok_text="Restore",
         ):
             return
-        try:
-            safety = backup_service.restore_database(path)
+        backup_path = path
+
+        def on_ok(safety):
+            self.main_window.reload_after_restore()
             message = "Backup restored successfully."
             if safety:
                 message += f"\n\nA safety copy of your previous data was saved at:\n{safety}"
             theme.show_success(self, message)
-        except ServiceError as exc:
-            theme.show_error(self, str(exc))
+
+        def on_err(msg):
+            theme.show_error(self, msg)
+
+        run_worker(self, backup_service.restore_database, on_ok, on_err, backup_path)

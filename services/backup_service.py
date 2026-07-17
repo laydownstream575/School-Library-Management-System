@@ -57,6 +57,9 @@ def backup_database(directory: str = None) -> str:
     return dest
 
 
+_REQUIRED_TABLES = {"books", "students", "book_issues", "settings", "activity_logs"}
+
+
 def restore_database(backup_path: str) -> str:
     """Replace the current database with a selected backup file.
 
@@ -69,7 +72,28 @@ def restore_database(backup_path: str) -> str:
     if not _looks_like_sqlite(backup_path):
         raise ServiceError("The selected file is not a valid database backup.")
 
-    # 1) Auto-backup current database before overwriting.
+    # 1) Validate backup integrity before touching the live file.
+    try:
+        check = sqlite3.connect(backup_path)
+        integrity = check.execute("PRAGMA integrity_check").fetchone()
+        if not integrity or integrity[0] != "ok":
+            check.close()
+            raise ServiceError("The backup file is corrupted and cannot be restored.")
+        tables = {
+            r[0] for r in check.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        check.close()
+        missing = _REQUIRED_TABLES - tables
+        if missing:
+            raise ServiceError(
+                f"The backup is missing required tables: {', '.join(sorted(missing))}."
+            )
+    except sqlite3.Error as exc:
+        raise ServiceError("Could not validate the backup file.") from exc
+
+    # 2) Auto-backup current database before overwriting.
     safety_path = None
     if os.path.exists(config.DATABASE_PATH):
         safety_dir = os.path.join(config.BACKUPS_DIR, "auto_before_restore")
@@ -83,7 +107,7 @@ def restore_database(backup_path: str) -> str:
             )
             shutil.copy2(config.DATABASE_PATH, safety_path)
 
-    # 2) Replace the live database file.
+    # 3) Replace the live database file.
     try:
         shutil.copy2(backup_path, config.DATABASE_PATH)
     except OSError as exc:
@@ -91,10 +115,17 @@ def restore_database(backup_path: str) -> str:
             "Restore failed while replacing the database file."
         ) from exc
 
-    # 3) Make sure the restored database has the required schema/objects.
+    # 4) Make sure the restored database has the required schema/objects.
     try:
         database.initialize_database()
     except database.DatabaseError as exc:
+        # Try to roll back from the safety backup.
+        if safety_path and os.path.exists(safety_path):
+            try:
+                shutil.copy2(safety_path, config.DATABASE_PATH)
+                database.initialize_database()
+            except (OSError, database.DatabaseError):
+                pass
         raise ServiceError(
             "The backup was restored but the schema could not be verified. "
             "Try restoring again or contact support."

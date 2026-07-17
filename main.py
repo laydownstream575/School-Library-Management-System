@@ -89,6 +89,7 @@ if __name__ == "__main__":
 
     try:
         database.initialize_database()
+        database.check_integrity()
         logging.info("Database ready at %s", config.DATABASE_PATH)
     except Exception as exc:
         logging.critical("Database initialisation failed", exc_info=True)

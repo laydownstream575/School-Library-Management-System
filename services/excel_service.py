@@ -4,8 +4,13 @@ Excel is a support format only: importing books/students, exporting reports,
 and full backups. It is never the main data store.
 """
 
+import logging
 import os
+import time
+import zipfile
+from datetime import datetime
 
+import openpyxl
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -13,6 +18,7 @@ from openpyxl.utils import get_column_letter
 from app import config, database, utils
 from services import ServiceError, book_service, student_service
 
+logger = logging.getLogger(__name__)
 _export_folder = None
 
 
@@ -33,25 +39,44 @@ class ImportSummary:
     def __init__(self):
         self.total = 0
         self.imported = 0
+        self.updated = 0
         self.skipped = 0
+        self.duplicate_in_file = 0
         self.errors = 0
         self.messages = []
 
-    def add_error(self, row_number, reason):
-        self.errors += 1
-        self.messages.append(f"Row {row_number}: {reason}")
+    def add_imported(self, row_number):
+        self.imported += 1
+
+    def add_updated(self, row_number, reason=""):
+        self.updated += 1
+        self.messages.append(f"Row {row_number} — Updated: {reason}")
 
     def add_skip(self, row_number, reason):
         self.skipped += 1
-        self.messages.append(f"Row {row_number}: {reason}")
+        self.messages.append(f"Row {row_number} — Skipped: {reason}")
+
+    def add_duplicate_in_file(self, row_number, original_row):
+        self.duplicate_in_file += 1
+        self.messages.append(
+            f"Row {row_number} — Duplicate in workbook: "
+            f"Same record already appeared at row {original_row}."
+        )
+
+    def add_error(self, row_number, reason):
+        self.errors += 1
+        self.messages.append(f"Row {row_number} — Failed: {reason}")
 
     def as_text(self) -> str:
         lines = [
             f"Total rows: {self.total}",
-            f"Imported rows: {self.imported}",
-            f"Skipped rows: {self.skipped}",
-            f"Error rows: {self.errors}",
+            f"Imported: {self.imported}",
+            f"Updated: {self.updated}",
+            f"Skipped (unchanged): {self.skipped}",
         ]
+        if self.duplicate_in_file:
+            lines.append(f"Duplicates inside Excel: {self.duplicate_in_file}")
+        lines.append(f"Failed: {self.errors}")
         if self.messages:
             lines.append("")
             lines.append("Details:")
@@ -95,60 +120,91 @@ def _cell(row, headers, *names):
 def import_books(file_path: str) -> ImportSummary:
     """Import books from an Excel file. Returns an ImportSummary.
 
-    Rows missing required fields are skipped. Old Excel files with ISBN
-    or Rack Number columns are handled gracefully (those columns are ignored).
+    Uses normalized (title + author + category) as the unique key.
+    New books are inserted; existing books with unchanged data are skipped;
+    existing books with changed metadata or quantity are updated (preserving
+    currently issued copies). Duplicate rows within the same workbook are
+    detected and skipped.
     """
     summary = ImportSummary()
-    worksheet = _open_first_sheet(file_path)
-    headers = _header_map(worksheet)
-    if not headers:
-        raise ServiceError("The Excel file appears to be empty.")
+    workbook, worksheet = _open_workbook(file_path)
+    try:
+        headers = _header_map(worksheet)
+        if not headers:
+            raise ServiceError("The Excel file appears to be empty.")
 
-    for row_number, row in enumerate(
-        worksheet.iter_rows(min_row=2, values_only=True), start=2
-    ):
-        if row is None or all(c is None or str(c).strip() == "" for c in row):
-            continue
-        summary.total += 1
+        seen_in_file = {}
 
-        title = _cell(row, headers, "Book Title", "Title")
-        total_qty = _cell(row, headers, "Total Quantity", "Total Qty", "Quantity")
+        for row_number, row in enumerate(
+            worksheet.iter_rows(min_row=2, values_only=True), start=2
+        ):
+            if row is None or all(c is None or str(c).strip() == "" for c in row):
+                continue
+            summary.total += 1
 
-        if not title:
-            summary.add_skip(row_number, "Missing book title.")
-            continue
-        try:
-            total = int(float(total_qty)) if total_qty else 0
-        except (ValueError, TypeError):
-            summary.add_error(row_number, "Total quantity is not a number.")
-            continue
-        if total < 0:
-            summary.add_error(row_number, "Total quantity cannot be negative.")
-            continue
+            title = _cell(row, headers, "Book Title", "Title")
+            total_qty = _cell(row, headers, "Total Quantity", "Total Qty", "Quantity")
 
-        available_raw = _cell(row, headers, "Available Quantity", "Available Qty")
-        try:
-            available = int(float(available_raw)) if available_raw else total
-        except (ValueError, TypeError):
-            available = total
-        available = max(0, min(available, total))
+            if not title:
+                summary.add_skip(row_number, "Missing book title.")
+                continue
+            try:
+                total = int(float(total_qty)) if total_qty else 0
+            except (ValueError, TypeError):
+                summary.add_error(row_number, "Total quantity is not a number.")
+                continue
+            if total < 0:
+                summary.add_error(row_number, "Total quantity cannot be negative.")
+                continue
 
-        data = {
-            "title": title,
-            "author": _cell(row, headers, "Author"),
-            "category": _cell(row, headers, "Category"),
-            "total_quantity": total,
-            "available_quantity": available,
-        }
+            author = _cell(row, headers, "Author")
+            category = _cell(row, headers, "Category")
 
-        try:
-            book_service.add_book(data)
-            summary.imported += 1
-        except ServiceError as exc:
-            summary.add_error(row_number, str(exc))
+            book_key = (
+                utils.normalize_key(title) + "|"
+                + utils.normalize_key(author) + "|"
+                + utils.normalize_key(category)
+            )
+            if book_key in seen_in_file:
+                summary.add_duplicate_in_file(row_number, seen_in_file[book_key])
+                continue
+            seen_in_file[book_key] = row_number
 
-    utils.log_activity("BOOKS_IMPORTED",
-                       f"Imported {summary.imported} books from Excel")
+            data = {
+                "title": title,
+                "author": author,
+                "category": category,
+                "total_quantity": total,
+            }
+
+            try:
+                result = book_service.import_book(data)
+                if result == "imported":
+                    summary.add_imported(row_number)
+                elif result == "updated":
+                    summary.add_updated(
+                        row_number,
+                        f"Existing book quantity/content changed."
+                    )
+                else:
+                    summary.add_skip(
+                        row_number, "Book already exists and no values changed."
+                    )
+            except ServiceError as exc:
+                summary.add_error(row_number, str(exc))
+    finally:
+        workbook.close()
+
+    utils.log_activity(
+        "BOOKS_IMPORTED",
+        f"Imported {summary.imported}, updated {summary.updated}, "
+        f"skipped {summary.skipped} books from Excel"
+    )
+    logger.debug(
+        "import_books: %d total, %d imported, %d updated, %d skipped, %d errors",
+        summary.total, summary.imported, summary.updated,
+        summary.skipped, summary.errors,
+    )
     return summary
 
 
@@ -156,51 +212,72 @@ def import_books(file_path: str) -> ImportSummary:
 # Import: students
 # ---------------------------------------------------------------------------
 def import_students(file_path: str) -> ImportSummary:
-    """Import students from Excel. Duplicate Student IDs are skipped."""
+    """Import students from Excel. Returns an ImportSummary.
+
+    Uses student_code as the unique key. New students are inserted;
+    existing students with unchanged data are skipped; existing students
+    with changed metadata (name, class, division) are updated.
+    Duplicate rows within the same workbook are detected and skipped.
+
+    Performs the entire import in a single database transaction for
+    performance (one commit instead of one per row).
+    """
     summary = ImportSummary()
-    worksheet = _open_first_sheet(file_path)
-    headers = _header_map(worksheet)
-    if not headers:
-        raise ServiceError("The Excel file appears to be empty.")
+    workbook, worksheet = _open_workbook(file_path)
+    try:
+        headers = _header_map(worksheet)
+        if not headers:
+            raise ServiceError("The Excel file appears to be empty.")
 
-    for row_number, row in enumerate(
-        worksheet.iter_rows(min_row=2, values_only=True), start=2
-    ):
-        if row is None or all(c is None or str(c).strip() == "" for c in row):
-            continue
-        summary.total += 1
+        seen_in_file = {}
+        students = []
 
-        code = _cell(row, headers, "Student ID", "Student Code", "Admission Number")
-        name = _cell(row, headers, "Student Name", "Name")
+        for row_number, row in enumerate(
+            worksheet.iter_rows(min_row=2, values_only=True), start=2
+        ):
+            if row is None or all(c is None or str(c).strip() == "" for c in row):
+                continue
+            summary.total += 1
 
-        if not code:
-            summary.add_skip(row_number, "Missing Student ID.")
-            continue
-        if not name:
-            summary.add_skip(row_number, "Missing Student Name.")
-            continue
+            code = _cell(row, headers, "Student ID", "Student Code", "Admission Number")
+            name = _cell(row, headers, "Student Name", "Name")
 
-        existing = database.fetch_one(
-            "SELECT id FROM students WHERE student_code = ?", (code,)
-        )
-        if existing is not None:
-            summary.add_skip(row_number, f"Student ID '{code}' already exists.")
-            continue
+            if not code:
+                summary.add_skip(row_number, "Missing Student ID.")
+                continue
+            if not name:
+                summary.add_skip(row_number, "Missing Student Name.")
+                continue
 
-        data = {
-            "student_code": code,
-            "name": name,
-            "class_name": _cell(row, headers, "Class", "Class Name"),
-            "division": _cell(row, headers, "Division"),
-        }
-        try:
-            student_service.add_student(data)
-            summary.imported += 1
-        except ServiceError as exc:
-            summary.add_error(row_number, str(exc))
+            code_normalized = code.strip().upper()
+            if code_normalized in seen_in_file:
+                summary.add_duplicate_in_file(row_number, seen_in_file[code_normalized])
+                continue
+            seen_in_file[code_normalized] = row_number
 
-    utils.log_activity("STUDENTS_IMPORTED",
-                       f"Imported {summary.imported} students from Excel")
+            students.append({
+                "student_code": code,
+                "name": name,
+                "class_name": _cell(row, headers, "Class", "Class Name"),
+                "division": _cell(row, headers, "Division"),
+            })
+
+        if students:
+            result = student_service.import_students_batch(students)
+            summary.imported = result["imported"]
+            summary.updated = result["updated"]
+            summary.skipped += result["skipped"]
+            summary.errors += result["errors"]
+            for code, msg in result["error_details"]:
+                summary.messages.append(f"Code {code} — Failed: {msg}")
+    finally:
+        workbook.close()
+
+    logger.debug(
+        "import_students: %d total, %d imported, %d updated, %d skipped, %d errors",
+        summary.total, summary.imported, summary.updated,
+        summary.skipped, summary.errors,
+    )
     return summary
 
 
@@ -240,7 +317,12 @@ def export_rows(columns, rows, filename: str, sheet_title: str = "Report",
     _write_table(worksheet, columns, rows, start_row)
 
     path = _export_path(filename)
-    workbook.save(path)
+    try:
+        workbook.save(path)
+    except OSError as exc:
+        raise ServiceError(
+            "Could not save the Excel file. Check folder permissions."
+        ) from exc
     return path
 
 
@@ -262,7 +344,7 @@ def export_books(rows=None) -> str:
         }
         for b in rows
     ]
-    return export_rows(columns, table, "books_export.xlsx", "Books", "Books List")
+    return export_rows(columns, table, _timestamped_filename("books_export"), "Books", "Books List")
 
 
 def export_students(rows=None) -> str:
@@ -280,7 +362,7 @@ def export_students(rows=None) -> str:
         }
         for s in rows
     ]
-    return export_rows(columns, table, "students_export.xlsx", "Students",
+    return export_rows(columns, table, _timestamped_filename("students_export"), "Students",
                        "Students List")
 
 
@@ -338,7 +420,12 @@ def export_full_backup(directory: str = None) -> str:
     os.makedirs(target_dir, exist_ok=True)
     date_part = utils.today_str()
     path = os.path.join(target_dir, f"library_full_backup_{date_part}.xlsx")
-    workbook.save(path)
+    try:
+        workbook.save(path)
+    except OSError as exc:
+        raise ServiceError(
+            "Could not save the Excel backup. Check folder permissions."
+        ) from exc
     utils.log_activity("EXCEL_BACKUP", f"Full Excel backup created: {path}")
     return path
 
@@ -397,20 +484,33 @@ def _autosize(worksheet, columns, rows, start_row):
         worksheet.column_dimensions[letter].width = min(max_len + 4, 45)
 
 
-def _open_first_sheet(file_path: str):
+def _open_workbook(file_path: str):
+    """Open a workbook in read-only mode. Returns (workbook, worksheet).
+
+    Caller MUST close the workbook in a finally block.
+    """
     if not file_path or not os.path.exists(file_path):
         raise ServiceError("Selected Excel file could not be found.")
     try:
         workbook = load_workbook(file_path, read_only=True, data_only=True)
-    except Exception as exc:
-        raise ServiceError("Invalid Excel file format.") from exc
-    return workbook.active
+    except (OSError, ValueError, zipfile.BadZipFile,
+            openpyxl.utils.exceptions.InvalidFileException):
+        raise ServiceError("Invalid Excel file format.")
+    except Exception:
+        logger.exception("Unexpected error opening workbook: %s", file_path)
+        raise ServiceError("Could not read the Excel file.")
+    return workbook, workbook.active
 
 
 def _safe_sheet_name(name: str) -> str:
     invalid = set('[]:*?/\\')
     clean = "".join(c for c in str(name) if c not in invalid)
     return (clean or "Sheet")[:31]
+
+
+def _timestamped_filename(base: str, ext: str = ".xlsx") -> str:
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    return f"{base}_{ts}{ext}"
 
 
 def _export_path(filename: str) -> str:

@@ -1,6 +1,8 @@
 """Issue Book page: select a student, select a book, set dates, and issue."""
 
-from PySide6.QtCore import QDate, Qt
+import logging
+
+from PySide6.QtCore import QDate, QTimer, Qt
 from PySide6.QtWidgets import (
     QDateEdit,
     QFrame,
@@ -19,6 +21,8 @@ from services import ServiceError, book_service, issue_service, student_service
 from app.config import DEFAULT_SETTINGS
 from ui import theme
 
+logger = logging.getLogger(__name__)
+
 
 class IssueBookPage(QWidget):
     """Two-panel selector (student / book) plus issue details form."""
@@ -34,6 +38,12 @@ class IssueBookPage(QWidget):
         self._students = []
         self._books = []
         self.default_due_days = int(utils.get_setting("default_due_days", DEFAULT_SETTINGS["default_due_days"]))
+        self._student_debounce = QTimer(self)
+        self._student_debounce.setSingleShot(True)
+        self._student_debounce.timeout.connect(self._reload_students)
+        self._book_debounce = QTimer(self)
+        self._book_debounce.setSingleShot(True)
+        self._book_debounce.timeout.connect(self._reload_books)
         self._build_ui()
         self.refresh()
 
@@ -74,7 +84,7 @@ class IssueBookPage(QWidget):
         self.student_search.setPlaceholderText(
             "Search by student ID, name, class, or division"
         )
-        self.student_search.textChanged.connect(self._reload_students)
+        self.student_search.textChanged.connect(lambda: self._student_debounce.start(250))
         v.addWidget(self.student_search)
 
         self.student_table = QTableWidget(0, len(self.STUDENT_COLUMNS))
@@ -118,7 +128,7 @@ class IssueBookPage(QWidget):
         self.book_search.setPlaceholderText(
             "Search by title, author, or category"
         )
-        self.book_search.textChanged.connect(self._reload_books)
+        self.book_search.textChanged.connect(lambda: self._book_debounce.start(250))
         v.addWidget(self.book_search)
 
         self.book_table = QTableWidget(0, len(self.BOOK_COLUMNS))
@@ -222,7 +232,11 @@ class IssueBookPage(QWidget):
         self._update_issue_enabled()
 
     def _reload_students(self):
-        students = student_service.get_active_students(self.student_search.text())
+        try:
+            students = student_service.get_active_students(self.student_search.text())
+        except ServiceError:
+            logger.exception("Failed to load students")
+            return
         self._students = students
         self.student_table.setRowCount(0)
         for st in students:
@@ -235,7 +249,11 @@ class IssueBookPage(QWidget):
         self.student_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
 
     def _reload_books(self):
-        books = book_service.get_active_available_books(self.book_search.text())
+        try:
+            books = book_service.get_active_available_books(self.book_search.text())
+        except ServiceError:
+            logger.exception("Failed to load books")
+            return
         self._books = books
         self.book_table.setRowCount(0)
         for b in books:
@@ -260,7 +278,11 @@ class IssueBookPage(QWidget):
             return
         self.selected_student = self._students[row]
         st = self.selected_student
-        pending = student_service.get_pending_count(st["id"])
+        try:
+            pending = student_service.get_pending_count(st["id"])
+        except ServiceError:
+            logger.exception("Failed to load pending count")
+            pending = "?"
         self.student_card_label.setText(
             f"Name: {st.get('name')}\n"
             f"ID: {st.get('student_code')}\n"

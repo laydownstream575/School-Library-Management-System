@@ -42,7 +42,7 @@ def dashboard_summary() -> dict:
         }
     except database.DatabaseError:
         logger.exception("dashboard_summary failed")
-        return {}
+        raise ServiceError("Unable to load dashboard summary.")
 
 
 def recent_issues(limit: int = 8):
@@ -58,7 +58,7 @@ def recent_issues(limit: int = 8):
         return [dict(r) for r in database.fetch_all(query, (limit,))]
     except database.DatabaseError:
         logger.exception("recent_issues failed")
-        return []
+        raise ServiceError("Unable to load recent issues.")
 
 
 def recent_returns(limit: int = 8):
@@ -75,7 +75,7 @@ def recent_returns(limit: int = 8):
         return [dict(r) for r in database.fetch_all(query, (limit,))]
     except database.DatabaseError:
         logger.exception("recent_returns failed")
-        return []
+        raise ServiceError("Unable to load recent returns.")
 
 
 # ---------------------------------------------------------------------------

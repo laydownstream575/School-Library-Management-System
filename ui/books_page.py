@@ -212,10 +212,10 @@ class BooksPage(QWidget):
         )
 
     def _populate(self, books):
-        self.table.setRowCount(0)
-        for book in books:
-            r = self.table.rowCount()
-            self.table.insertRow(r)
+        self.table.setUpdatesEnabled(False)
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(books))
+        for r, book in enumerate(books):
             self.table.setRowHeight(r, 64)
             self.table.setItem(r, 0, self._centered_item(str(book["id"])))
             self.table.setItem(r, 1, self._centered_item(book.get("title") or ""))
@@ -232,6 +232,8 @@ class BooksPage(QWidget):
             )
             self.table.setCellWidget(r, 7, theme.badge_in_cell(book.get("status", "")))
             self.table.setCellWidget(r, 8, self._actions_cell(book))
+        self.table.setSortingEnabled(True)
+        self.table.setUpdatesEnabled(True)
         self.table.resizeColumnsToContents()
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(1, QHeaderView.Stretch)

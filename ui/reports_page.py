@@ -1,5 +1,8 @@
 """Reports page: pick a report type, filter, view, and export to Excel."""
 
+import logging
+from datetime import datetime
+
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -17,6 +20,9 @@ from PySide6.QtWidgets import (
 from app import utils
 from services import ServiceError, excel_service, report_service, student_service
 from ui import theme
+from ui.workers import run_worker
+
+logger = logging.getLogger(__name__)
 
 REPORT_TYPES = [
     "All Books",
@@ -198,8 +204,10 @@ class ReportsPage(QWidget):
                     columns, rows = func(search, date_from, date_to)
             else:
                 columns, rows = func(search)
-        except ServiceError:
-            columns, rows = [], []
+        except ServiceError as exc:
+            logger.exception("Report generation failed")
+            self.status_label.setText(f"Error: {exc}")
+            return
 
         self._columns, self._rows = columns, rows
         self._render(columns, rows)
@@ -210,7 +218,11 @@ class ReportsPage(QWidget):
 
     def _search_students(self):
         text = self.student_search_input.text()
-        students = student_service.get_students(search=text)
+        try:
+            students = student_service.get_students(search=text)
+        except ServiceError as exc:
+            theme.show_error(self, str(exc))
+            return
         self._student_rows = students
         self.student_table.setRowCount(0)
         for st in students:
@@ -229,7 +241,11 @@ class ReportsPage(QWidget):
         if row < 0 or row >= len(self._student_rows):
             return
         student = self._student_rows[row]
-        columns, rows = report_service.report_student_history(student["id"])
+        try:
+            columns, rows = report_service.report_student_history(student["id"])
+        except ServiceError as exc:
+            theme.show_error(self, str(exc))
+            return
         self._columns, self._rows = columns, rows
         self._render(columns, rows)
         self.export_btn.setEnabled(bool(rows))
@@ -263,7 +279,8 @@ class ReportsPage(QWidget):
                 if value is None:
                     value = ""
                 self.table.setItem(r, col, QTableWidgetItem(str(value)))
-        self.table.resizeColumnsToContents()
+        for col in range(len(columns)):
+            self.table.setColumnWidth(col, 150)
         if columns:
             self.table.horizontalHeader().setSectionResizeMode(
                 len(columns) - 1, QHeaderView.Stretch
@@ -274,17 +291,19 @@ class ReportsPage(QWidget):
             theme.show_info(self, "No data to export.")
             return
         report_type = self._current_type()
-        filename = report_type.lower().replace(" ", "_").replace("-", "_") + "_report.xlsx"
-        try:
-            path = excel_service.export_rows(
-                self._columns, self._rows, filename,
-                sheet_title=report_type[:31],
-                report_title=f"{report_type} Report"
-            )
+        prefix = report_type.lower().replace(" ", "_").replace("-", "_")
+        filename = f"{prefix}_report_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+        cols, rows = list(self._columns), list(self._rows)
+
+        def on_ok(path):
             theme.show_success(
                 self, f"Report exported successfully.\nFile saved at:\n{path}"
             )
-        except ServiceError as exc:
-            theme.show_error(self, str(exc))
-        except Exception:
-            theme.show_error(self, "Unable to export the report. Please try again.")
+
+        def on_err(msg):
+            theme.show_error(self, msg)
+
+        run_worker(self, excel_service.export_rows, on_ok, on_err,
+                   cols, rows, filename,
+                   sheet_title=report_type[:31],
+                   report_title=f"{report_type} Report")

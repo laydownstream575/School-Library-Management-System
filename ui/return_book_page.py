@@ -1,5 +1,7 @@
 """Return Book page: search pending issues, select one, and return it."""
 
+import logging
+
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -18,6 +20,8 @@ from PySide6.QtWidgets import (
 from app import utils
 from services import ServiceError, issue_service
 from ui import theme
+
+logger = logging.getLogger(__name__)
 
 
 class ReturnBookPage(QWidget):
@@ -161,7 +165,11 @@ class ReturnBookPage(QWidget):
         self.selected_issue = None
         self.return_button.setEnabled(False)
         self._clear_detail()
-        rows = issue_service.get_pending_returns(self.search_input.text())
+        try:
+            rows = issue_service.get_pending_returns(self.search_input.text())
+        except ServiceError:
+            logger.exception("Failed to load pending returns")
+            return
         self._rows = rows
         self.table.setRowCount(0)
         for rec in rows:
